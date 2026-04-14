@@ -36,7 +36,7 @@
             owner = "borglab";
             repo = "gtsam";
             rev = "4.2";
-            sha256 = "sha256-lSqiVaJc1jagjo5ichn/grH9/dCwZGdTLMjpn58KlRs=";
+            sha256 = "sha256-HjpGrHclpm2XsicZty/rX/RM/762wzmj4AAoEfni8es=";
           };
         });
 
