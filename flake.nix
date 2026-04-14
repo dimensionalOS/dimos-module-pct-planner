@@ -38,6 +38,9 @@
             rev = "4.2";
             sha256 = "sha256-HjpGrHclpm2XsicZty/rX/RM/762wzmj4AAoEfni8es=";
           };
+          cmakeFlags = (old.cmakeFlags or []) ++ [
+            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
+          ];
         });
 
         # PCT's vendored smoothing lib targets OSQP 0.6.x API
