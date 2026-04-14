@@ -30,8 +30,8 @@ class GPInterpolateObstacleFactor
 
   gtsam::Vector evaluateError(
       const gtsam::Vector6& x1, const gtsam::Vector6& x2,
-      boost::optional<gtsam::Matrix&> H1 = boost::none,
-      boost::optional<gtsam::Matrix&> H2 = boost::none) const override;
+      gtsam::Matrix* H1 = nullptr,
+      gtsam::Matrix* H2 = nullptr) const override;
 
  private:
   mutable int count_ = 0;

@@ -17,8 +17,8 @@ class GPPriorFactorOrigin
 
   gtsam::Vector evaluateError(
       const gtsam::Vector4& x1, const gtsam::Vector4& x2,
-      boost::optional<gtsam::Matrix&> H1 = boost::none,
-      boost::optional<gtsam::Matrix&> H2 = boost::none) const override;
+      gtsam::Matrix* H1 = nullptr,
+      gtsam::Matrix* H2 = nullptr) const override;
 
   void verbose() {}
 

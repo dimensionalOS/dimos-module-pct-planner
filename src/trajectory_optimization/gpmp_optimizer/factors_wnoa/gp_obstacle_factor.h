@@ -23,7 +23,7 @@ class GPObstacleFactorWnoa : public gtsam::NoiseModelFactor1<gtsam::Vector4> {
 
   gtsam::Vector evaluateError(
       const gtsam::Vector4& x1,
-      boost::optional<gtsam::Matrix&> H1 = boost::none) const override;
+      gtsam::Matrix* H1 = nullptr) const override;
 
   void verbose() { verbose_ = true; }
 

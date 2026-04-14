@@ -28,19 +28,13 @@
         # gtsam-extended pulls gtsam's `develop` tarball, whose hash drifts
         # upstream. Override src with a pinned archive so builds stay
         # reproducible even after upstream moves.
-        # Pin to GTSAM 4.2 — the factor signatures in the reference PCT use
-        # the legacy `OptionalJacobian` API which GTSAM removed in 4.3a1.
+        # gtsam-extended builds GTSAM 4.3a1. Pin its upstream `develop`
+        # tarball hash so builds remain reproducible after upstream moves.
         gtsam = (gtsam-extended.packages.${system}.gtsam-cpp).overrideAttrs (old: {
-          version = "4.2";
-          src = pkgs.fetchFromGitHub {
-            owner = "borglab";
-            repo = "gtsam";
-            rev = "4.2";
-            sha256 = "sha256-HjpGrHclpm2XsicZty/rX/RM/762wzmj4AAoEfni8es=";
+          src = pkgs.fetchzip {
+            url = "https://github.com/borglab/gtsam/archive/develop.tar.gz";
+            sha256 = "sha256-TGs9iF38y3W3LUul7y+Pea5uT83EOMJ2Yn+F5Rd2bx8=";
           };
-          cmakeFlags = (old.cmakeFlags or []) ++ [
-            "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
-          ];
         });
 
         # PCT's vendored smoothing lib targets OSQP 0.6.x API

@@ -1,7 +1,7 @@
 #include "trajectory_optimization/gpmp_optimizer/factors/gp_obstacle_factor.h"
 
 gtsam::Vector GPObstacleFactor::evaluateError(
-    const gtsam::Vector6& x1, boost::optional<gtsam::Matrix&> H1) const {
+    const gtsam::Vector6& x1, gtsam::Matrix* H1) const {
   double cost;
   Eigen::Vector2d grad;
 

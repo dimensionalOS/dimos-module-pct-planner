@@ -1,7 +1,7 @@
 #include "trajectory_optimization/gpmp_optimizer/factors/gp_heading_rate_factor.h"
 
 gtsam::Vector GPHeadingRateFactor::evaluateError(
-    const gtsam::Vector6& x1, boost::optional<gtsam::Matrix&> H1) const {
+    const gtsam::Vector6& x1, gtsam::Matrix* H1) const {
   double dx = x1(1);
   double ddx = x1(2);
   double dy = x1(4);
