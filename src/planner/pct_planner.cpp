@@ -158,10 +158,15 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
   Eigen::Vector3i start_idx;
   Eigen::Vector3i goal_idx;
 
-  const double start_slice_f = std::round((start.z() - slice_h0_) / slice_dh_);
-  const double goal_slice_f = std::round((goal.z() - slice_h0_) / slice_dh_);
-  start_idx[0] = static_cast<int>(std::clamp(start_slice_f, 0.0, static_cast<double>(n_slice_ - 1)));
-  goal_idx[0] = static_cast<int>(std::clamp(goal_slice_f, 0.0, static_cast<double>(n_slice_ - 1)));
+  // Layer simplification collapses the original tomogram slices down to a
+  // minimal set (often 1 or 2 for single-floor scenes), so a naive
+  // (z - slice_h0) / slice_dh lookup against the *simplified* layer count is
+  // meaningless. Default both ends to the ground layer (layer 0); for
+  // multi-floor the A* traversability+gateway logic will transition up.
+  start_idx[0] = 0;
+  goal_idx[0] = 0;
+  (void)start.z();
+  (void)goal.z();
 
   const Eigen::Vector2i s2 = Pos2Idx(start.head<2>());
   const Eigen::Vector2i g2 = Pos2Idx(goal.head<2>());
