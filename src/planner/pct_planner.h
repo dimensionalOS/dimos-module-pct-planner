@@ -11,16 +11,17 @@
 namespace pct {
 
 struct PlannerConfig {
-  double astar_cost_threshold = 30.0;
-  double safe_cost_margin = 10.0;
-  double max_heading_rate = 0.5;
-  bool use_quintic = false;
-  int sample_interval = 4;
-  int interpolate_num = 4;
-  int max_iterations = 20;
-  double lambda_initial = 1e-3;
-  double qc_position = 1.0;
-  double qc_heading = 1.0;
+  // Match pct_planner reference param.py defaults.
+  double astar_cost_threshold = 50.0;
+  double safe_cost_margin = 15.0;
+  double max_heading_rate = 10.0;
+  bool use_quintic = true;
+  int sample_interval = 5;
+  int interpolate_num = 5;
+  int max_iterations = 100;
+  double lambda_initial = 10.0;
+  double qc_position = 0.05;
+  double qc_heading = 0.005;
 };
 
 // Orchestrator: loads a Tomogram, feeds it to OfflineElePlanner, and extracts

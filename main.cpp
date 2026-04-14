@@ -157,6 +157,13 @@ int main(int argc, char** argv) {
   tomo_cfg.standable_ratio = mod.arg_float("standable_ratio", 0.5f);
 
   pct::PlannerConfig planner_cfg;
+  planner_cfg.astar_cost_threshold =
+      mod.arg_float("astar_cost_threshold", static_cast<float>(planner_cfg.astar_cost_threshold));
+  planner_cfg.safe_cost_margin =
+      mod.arg_float("safe_cost_margin", static_cast<float>(planner_cfg.safe_cost_margin));
+  planner_cfg.max_heading_rate =
+      mod.arg_float("max_heading_rate", static_cast<float>(planner_cfg.max_heading_rate));
+  planner_cfg.use_quintic = mod.arg_bool("use_quintic", planner_cfg.use_quintic);
 
   const double lookahead_dist = mod.arg_float("lookahead_distance", 2.0f);
   const float update_rate = mod.arg_float("update_rate", 5.0f);
