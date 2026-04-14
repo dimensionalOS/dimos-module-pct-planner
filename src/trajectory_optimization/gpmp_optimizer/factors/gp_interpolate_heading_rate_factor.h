@@ -2,19 +2,20 @@
 
 #include <memory>
 
-#include "gtsam/nonlinear/NonlinearFactor.h"
+#include "gtsam/nonlinear/NoiseModelFactor.h"
 #include "map_manager/dense_elevation_map.h"
 #include "trajectory_optimization/gpmp_optimizer/interpolator/wnoj_interpolator.hpp"
 
 class GPInterpolateHeadingRateFactor
     : public gtsam::NoiseModelFactorN<gtsam::Vector6, gtsam::Vector6> {
  public:
+  using Base = gtsam::NoiseModelFactorN<gtsam::Vector6, gtsam::Vector6>;
   GPInterpolateHeadingRateFactor(gtsam::Key key1, gtsam::Key key2,
                                  const double max_heading_rate,
                                  const double q_cost, const double qc,
                                  const double interval,
                                  const double param_start, const double tau)
-      : NoiseModelFactorN(gtsam::noiseModel::Isotropic::Sigma(1, q_cost), key1,
+      : Base(gtsam::noiseModel::Isotropic::Sigma(1, q_cost), key1,
                           key2),
         max_heading_rate_(max_heading_rate),
         param_(param_start + tau),

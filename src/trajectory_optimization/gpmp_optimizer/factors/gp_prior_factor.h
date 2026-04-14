@@ -1,14 +1,15 @@
 #pragma once
 
-#include "gtsam/nonlinear/NonlinearFactor.h"
+#include "gtsam/nonlinear/NoiseModelFactor.h"
 #include "trajectory_optimization/gpmp_optimizer/models/wnoj.hpp"
 
 class GPPriorFactor
     : public gtsam::NoiseModelFactorN<gtsam::Vector6, gtsam::Vector6> {
  public:
+  using Base = gtsam::NoiseModelFactorN<gtsam::Vector6, gtsam::Vector6>;
   GPPriorFactor(gtsam::Key key1, gtsam::Key key2, const double delta,
                 const double Qc)
-      : NoiseModelFactorN(gtsam::noiseModel::Gaussian::Covariance(
+      : Base(gtsam::noiseModel::Gaussian::Covariance(
                               WhiteNoiseOnJerkModel2D::Q(Qc, delta)),
                           key1, key2),
         delta_(delta),

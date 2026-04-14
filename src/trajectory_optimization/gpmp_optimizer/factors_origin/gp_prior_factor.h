@@ -1,14 +1,15 @@
 #pragma once
 
-#include "gtsam/nonlinear/NonlinearFactor.h"
+#include "gtsam/nonlinear/NoiseModelFactor.h"
 #include "trajectory_optimization/gpmp_optimizer/models/wnoa_origin.hpp"
 
 class GPPriorFactorOrigin
     : public gtsam::NoiseModelFactorN<gtsam::Vector4, gtsam::Vector4> {
  public:
+  using Base = gtsam::NoiseModelFactorN<gtsam::Vector4, gtsam::Vector4>;
   GPPriorFactorOrigin(gtsam::Key key1, gtsam::Key key2, const double delta,
                       const double Qc)
-      : NoiseModelFactorN(gtsam::noiseModel::Gaussian::Covariance(
+      : Base(gtsam::noiseModel::Gaussian::Covariance(
                               calcQ(Qc * Eigen::Matrix2d::Identity(), delta)),
                           key1, key2),
         delta_(delta),
