@@ -1,6 +1,6 @@
 #pragma once
 
-#include "gtsam/nonlinear/NoiseModelFactor.h"
+#include "gtsam/nonlinear/NoiseModelFactorN.h"
 #include "trajectory_optimization/gpmp_optimizer/models/wnoa.hpp"
 
 class GPPriorFactorWnoa

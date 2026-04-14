@@ -2,7 +2,7 @@
 
 #include <memory>
 
-#include "gtsam/nonlinear/NoiseModelFactor.h"
+#include "gtsam/nonlinear/NoiseModelFactorN.h"
 #include "map_manager/dense_elevation_map.h"
 #include "trajectory_optimization/gpmp_optimizer/interpolator/wnoj_interpolator.hpp"
 
