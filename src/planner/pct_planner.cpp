@@ -134,7 +134,7 @@ void TomogramPlanner::InitEleplannerFromTomogram() {
                                                      planner_cfg_.use_quintic);
   ele_planner_->InitMap(planner_cfg_.astar_cost_threshold,
                         planner_cfg_.safe_cost_margin, resolution_, n_slice,
-                        kGridStep, cost_map, elev_g, elev_c, elev_g, grad_x,
+                        kGridStep, cost_map, elev_g, elev_c, gateway, grad_x,
                         grad_y);
   ele_planner_->set_sample_interval(planner_cfg_.sample_interval);
   ele_planner_->set_interpolate_num(planner_cfg_.interpolate_num);
