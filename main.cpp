@@ -260,8 +260,14 @@ int main(int argc, char** argv) {
           ps.pose.orientation.w = 1.0;
         }
         lcm.publish(topic_path, &path_msg);
-        std::printf("[PCT] Published path with %lld poses\n",
-                    static_cast<long long>(current_path.rows()));
+        std::printf(
+            "[PCT] Published path with %lld poses: start=(%.2f,%.2f) "
+            "end=(%.2f,%.2f) goal=(%.2f,%.2f) robot=(%.2f,%.2f)\n",
+            static_cast<long long>(current_path.rows()),
+            current_path(0, 0), current_path(0, 1),
+            current_path(current_path.rows() - 1, 0),
+            current_path(current_path.rows() - 1, 1),
+            goal.x(), goal.y(), robot_pos.x(), robot_pos.y());
       } else {
         std::printf("[PCT] Plan failed\n");
       }
