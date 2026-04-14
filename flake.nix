@@ -25,7 +25,15 @@
       let
         pkgs = import nixpkgs { inherit system; };
         lcm = lcm-extended.packages.${system}.lcm;
-        gtsam = gtsam-extended.packages.${system}.gtsam-cpp;
+        # gtsam-extended pulls gtsam's `develop` tarball, whose hash drifts
+        # upstream. Override src with a pinned archive so builds stay
+        # reproducible even after upstream moves.
+        gtsam = (gtsam-extended.packages.${system}.gtsam-cpp).overrideAttrs (old: {
+          src = pkgs.fetchzip {
+            url = "https://github.com/borglab/gtsam/archive/develop.tar.gz";
+            sha256 = "sha256-TGs9iF38y3W3LUul7y+Pea5uT83EOMJ2Yn+F5Rd2bx8=";
+          };
+        });
 
         # PCT's vendored smoothing lib targets OSQP 0.6.x API
         # (OSQPWorkspace/c_malloc/OSQPData). nixpkgs#osqp is 1.0.0 with a
