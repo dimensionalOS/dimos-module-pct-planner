@@ -28,10 +28,15 @@
         # gtsam-extended pulls gtsam's `develop` tarball, whose hash drifts
         # upstream. Override src with a pinned archive so builds stay
         # reproducible even after upstream moves.
+        # Pin to GTSAM 4.2 — the factor signatures in the reference PCT use
+        # the legacy `OptionalJacobian` API which GTSAM removed in 4.3a1.
         gtsam = (gtsam-extended.packages.${system}.gtsam-cpp).overrideAttrs (old: {
-          src = pkgs.fetchzip {
-            url = "https://github.com/borglab/gtsam/archive/develop.tar.gz";
-            sha256 = "sha256-TGs9iF38y3W3LUul7y+Pea5uT83EOMJ2Yn+F5Rd2bx8=";
+          version = "4.2";
+          src = pkgs.fetchFromGitHub {
+            owner = "borglab";
+            repo = "gtsam";
+            rev = "4.2";
+            sha256 = "sha256-lSqiVaJc1jagjo5ichn/grH9/dCwZGdTLMjpn58KlRs=";
           };
         });
 
