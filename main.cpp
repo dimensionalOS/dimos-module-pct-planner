@@ -199,6 +199,8 @@ int main(int argc, char** argv) {
 
   Eigen::MatrixXd current_path;
   bool has_plan = false;
+  bool have_goal = false;
+  Eigen::Vector3d active_goal = Eigen::Vector3d::Zero();
 
   const auto plan_period =
       std::chrono::milliseconds(static_cast<int>(1000.0f / update_rate));
@@ -232,13 +234,22 @@ int main(int argc, char** argv) {
       std::printf("[PCT] Rebuilding tomogram from %zu points\n",
                   cloud_xyz.size() / 3);
       planner.BuildTomogramFromCloud(cloud_xyz.data(), cloud_xyz.size() / 3);
+      // Tomogram geometry changed; existing plan is stale. Keep `have_goal`
+      // so we replan immediately below instead of waiting for a fresh goal.
       has_plan = false;
     }
 
-    if (goal_pending && odom_ok && planner.has_tomogram()) {
-      std::printf("[PCT] Planning to goal (%.2f,%.2f,%.2f)\n", goal.x(),
-                  goal.y(), goal.z());
-      Eigen::MatrixXd path = planner.Plan(robot_pos, goal);
+    if (goal_pending) {
+      active_goal = goal;
+      have_goal = true;
+    }
+
+    const bool need_replan =
+        have_goal && !has_plan && odom_ok && planner.has_tomogram();
+    if (need_replan) {
+      std::printf("[PCT] Planning to goal (%.2f,%.2f,%.2f)\n",
+                  active_goal.x(), active_goal.y(), active_goal.z());
+      Eigen::MatrixXd path = planner.Plan(robot_pos, active_goal);
       if (path.rows() > 0) {
         current_path = std::move(path);
         has_plan = true;
@@ -267,14 +278,14 @@ int main(int argc, char** argv) {
             current_path(0, 0), current_path(0, 1),
             current_path(current_path.rows() - 1, 0),
             current_path(current_path.rows() - 1, 1),
-            goal.x(), goal.y(), robot_pos.x(), robot_pos.y());
+            active_goal.x(), active_goal.y(), robot_pos.x(), robot_pos.y());
       } else {
         std::printf("[PCT] Plan failed\n");
       }
-      {
-        std::lock_guard<std::mutex> lk(state.mu);
-        state.goal_pending = false;
-      }
+    }
+    if (goal_pending) {
+      std::lock_guard<std::mutex> lk(state.mu);
+      state.goal_pending = false;
     }
 
     if (has_plan && odom_ok) {
