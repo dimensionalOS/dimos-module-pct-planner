@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
           ps.header = path_msg.header;
           ps.pose.position.x = current_path(i, 0);
           ps.pose.position.y = current_path(i, 1);
-          ps.pose.position.z = current_path(i, 2);
+          ps.pose.position.z = robot_pos.z();
           ps.pose.orientation.w = 1.0;
         }
         lcm.publish(topic_path, &path_msg);
@@ -300,7 +300,11 @@ int main(int argc, char** argv) {
         wp_msg.header = dimos::make_header(frame_id, ts);
         wp_msg.point.x = wp[0];
         wp_msg.point.y = wp[1];
-        wp_msg.point.z = wp[2];
+        // Ground-plane waypoint: the local planner only consumes x/y, but
+        // uses the waypoint z against its terrain-band filter. Mirror FAR
+        // and force robot's z so a slightly-elevated tomogram height
+        // doesn't push the waypoint outside the traversable band.
+        wp_msg.point.z = robot_pos.z();
         lcm.publish(topic_wp, &wp_msg);
       }
     }
