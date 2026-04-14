@@ -24,8 +24,8 @@ class GPInterpolatorWnoa {
 
   inline gtsam::Vector4 Interpolate(
       const gtsam::Vector4& x1, const gtsam::Vector4& x2,
-      gtsam::OptionalJacobian<4, 4> H1 = boost::none,
-      gtsam::OptionalJacobian<4, 4> H2 = boost::none) const {
+      gtsam::OptionalJacobian<4, 4> H1 = {},
+      gtsam::OptionalJacobian<4, 4> H2 = {}) const {
     if (H1) *H1 = lambda_;
     if (H2) *H2 = psi_;
     return lambda_ * x1 + psi_ * x2;

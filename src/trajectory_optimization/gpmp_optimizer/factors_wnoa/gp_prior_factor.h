@@ -4,11 +4,11 @@
 #include "trajectory_optimization/gpmp_optimizer/models/wnoa.hpp"
 
 class GPPriorFactorWnoa
-    : public gtsam::NoiseModelFactor2<gtsam::Vector4, gtsam::Vector4> {
+    : public gtsam::NoiseModelFactorN<gtsam::Vector4, gtsam::Vector4> {
  public:
   GPPriorFactorWnoa(gtsam::Key key1, gtsam::Key key2, const double delta,
                 const double Qc)
-      : NoiseModelFactor2(gtsam::noiseModel::Gaussian::Covariance(
+      : NoiseModelFactorN(gtsam::noiseModel::Gaussian::Covariance(
                               WhiteNoiseOnAcceleration2D::Q(Qc, delta)),
                           key1, key2),
         delta_(delta),

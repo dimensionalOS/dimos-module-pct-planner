@@ -7,7 +7,7 @@
 #include "trajectory_optimization/gpmp_optimizer/interpolator/wnoj_interpolator.hpp"
 
 class GPInterpolateObstacleFactor
-    : public gtsam::NoiseModelFactor2<gtsam::Vector6, gtsam::Vector6> {
+    : public gtsam::NoiseModelFactorN<gtsam::Vector6, gtsam::Vector6> {
  public:
   GPInterpolateObstacleFactor(gtsam::Key key1, gtsam::Key key2,
                               std::shared_ptr<DenseElevationMap> map,
@@ -15,7 +15,7 @@ class GPInterpolateObstacleFactor
                               const double cost_threshold, const double q_cost,
                               const double qc, const double interval,
                               const double param_start, const double tau)
-      : NoiseModelFactor2(gtsam::noiseModel::Isotropic::Sigma(1, q_cost), key1,
+      : NoiseModelFactorN(gtsam::noiseModel::Isotropic::Sigma(1, q_cost), key1,
                           key2),
         current_layer_(current_layer),
         height_hint_(height_hint),

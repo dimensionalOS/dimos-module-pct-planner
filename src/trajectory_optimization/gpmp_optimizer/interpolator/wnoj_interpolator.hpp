@@ -23,8 +23,8 @@ class GPInterpolator {
 
   inline gtsam::Vector6 Interpolate(
       const gtsam::Vector6& x1, const gtsam::Vector6& x2,
-      gtsam::OptionalJacobian<6, 6> H1 = boost::none,
-      gtsam::OptionalJacobian<6, 6> H2 = boost::none) const {
+      gtsam::OptionalJacobian<6, 6> H1 = {},
+      gtsam::OptionalJacobian<6, 6> H2 = {}) const {
     if (H1) *H1 = lambda_;
     if (H2) *H2 = psi_;
     return lambda_ * x1 + psi_ * x2;

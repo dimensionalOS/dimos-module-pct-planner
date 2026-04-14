@@ -7,14 +7,14 @@
 #include "trajectory_optimization/gpmp_optimizer/interpolator/wnoj_interpolator.hpp"
 
 class GPInterpolateHeadingRateFactor
-    : public gtsam::NoiseModelFactor2<gtsam::Vector6, gtsam::Vector6> {
+    : public gtsam::NoiseModelFactorN<gtsam::Vector6, gtsam::Vector6> {
  public:
   GPInterpolateHeadingRateFactor(gtsam::Key key1, gtsam::Key key2,
                                  const double max_heading_rate,
                                  const double q_cost, const double qc,
                                  const double interval,
                                  const double param_start, const double tau)
-      : NoiseModelFactor2(gtsam::noiseModel::Isotropic::Sigma(1, q_cost), key1,
+      : NoiseModelFactorN(gtsam::noiseModel::Isotropic::Sigma(1, q_cost), key1,
                           key2),
         max_heading_rate_(max_heading_rate),
         param_(param_start + tau),
