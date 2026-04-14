@@ -234,14 +234,15 @@ int main(int argc, char** argv) {
       std::printf("[PCT] Rebuilding tomogram from %zu points\n",
                   cloud_xyz.size() / 3);
       planner.BuildTomogramFromCloud(cloud_xyz.data(), cloud_xyz.size() / 3);
-      // Tomogram geometry changed; existing plan is stale. Keep `have_goal`
-      // so we replan immediately below instead of waiting for a fresh goal.
-      has_plan = false;
+      // Tomogram geometry changed but do NOT drop the current plan — the
+      // local planner is happier following a stable path. We'll replan only
+      // on a new goal or on explicit staleness below.
     }
 
     if (goal_pending) {
       active_goal = goal;
       have_goal = true;
+      has_plan = false;  // force replan on new goal
     }
 
     const bool need_replan =
