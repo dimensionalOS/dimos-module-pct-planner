@@ -179,10 +179,23 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
     return Eigen::MatrixXd();
   }
 
-  const auto& optimizer = ele_planner_->get_trajectory_optimizer();
-  Eigen::MatrixXd traj = optimizer.GetResultMatrix();
-  Eigen::VectorXd layers = optimizer.GetResultLayers();
-  Eigen::VectorXd heights = optimizer.GetResultHeight();
+  // `use_quintic=true` runs the GPMPOptimizer (wnoj) inside the ele_planner,
+  // so fetch the result matrix from that optimizer. The wnoa branch only has
+  // a populated trajectory_ when use_quintic=false.
+  Eigen::MatrixXd traj;
+  Eigen::VectorXd layers;
+  Eigen::VectorXd heights;
+  if (planner_cfg_.use_quintic) {
+    const auto& optimizer = ele_planner_->get_trajectory_optimizer_wnoj();
+    traj = optimizer.GetResultMatrix();
+    layers = optimizer.GetResultLayers();
+    heights = optimizer.GetResultHeight();
+  } else {
+    const auto& optimizer = ele_planner_->get_trajectory_optimizer();
+    traj = optimizer.GetResultMatrix();
+    layers = optimizer.GetResultLayers();
+    heights = optimizer.GetResultHeight();
+  }
   if (traj.rows() == 0) return Eigen::MatrixXd();
 
   const int y_idx = (static_cast<int>(traj.cols()) - 1) / 2;
