@@ -21,6 +21,17 @@ find_package(Eigen3 REQUIRED)
 find_package(GTSAM REQUIRED)
 find_package(osqp REQUIRED)
 
+# Every subdir library includes <Eigen/Core>, gtsam headers, and uses the
+# shared header layout under src/. Expose these include dirs project-wide so
+# the copied reference libs build without per-subdir wiring.
+include_directories(
+  SYSTEM
+  ${EIGEN3_INCLUDE_DIR}
+)
+include_directories(
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
 add_subdirectory(src/common/smoothing)
 add_subdirectory(src/a_star)
 add_subdirectory(src/map_manager)
