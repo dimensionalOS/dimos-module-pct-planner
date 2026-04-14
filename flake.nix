@@ -67,6 +67,7 @@
             gtsam
             pkgs.eigen
             osqp06
+            pkgs.glib
             pkgs.boost
             pkgs.tbb
           ];
