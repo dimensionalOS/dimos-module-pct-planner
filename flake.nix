@@ -53,6 +53,8 @@
           cmakeFlags = [
             "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
             "-DUNITTESTS=OFF"
+            "-DCMAKE_INSTALL_INCLUDEDIR=include"
+            "-DCMAKE_INSTALL_LIBDIR=lib"
           ];
         };
       in {
