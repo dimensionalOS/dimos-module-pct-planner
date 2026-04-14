@@ -39,7 +39,7 @@
             repo = "osqp";
             rev = "v${version}";
             fetchSubmodules = true;
-            sha256 = "sha256-3eVgAn4UkEvjVacOV9adgY9bHa/zjJJbwSmjLU+RZUw=";
+            sha256 = "sha256-enkK5EFyAeLaUnHNYS3oq43HsHY5IuSLgsYP0k/GW8c=";
           };
           nativeBuildInputs = [ pkgs.cmake ];
           cmakeFlags = [
