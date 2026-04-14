@@ -201,6 +201,12 @@ int main(int argc, char** argv) {
   bool has_plan = false;
   bool have_goal = false;
   Eigen::Vector3d active_goal = Eigen::Vector3d::Zero();
+  // Throttle tomogram rebuilds — PreloadedMapTracker publishes explored_areas
+  // at ~10 Hz but rebuilding the grid is ~1 s. Cap to 1 Hz so the main loop
+  // stays responsive for waypoint publishing.
+  const auto tomogram_rebuild_period = std::chrono::seconds(1);
+  auto last_tomogram_rebuild =
+      std::chrono::steady_clock::now() - tomogram_rebuild_period;
 
   const auto plan_period =
       std::chrono::milliseconds(static_cast<int>(1000.0f / update_rate));
@@ -231,12 +237,16 @@ int main(int argc, char** argv) {
     }
 
     if (cloud_pending) {
-      std::printf("[PCT] Rebuilding tomogram from %zu points\n",
-                  cloud_xyz.size() / 3);
-      planner.BuildTomogramFromCloud(cloud_xyz.data(), cloud_xyz.size() / 3);
-      // Tomogram geometry changed; current plan is stale and should be
-      // recomputed against the new grid below.
-      has_plan = false;
+      const auto since =
+          std::chrono::steady_clock::now() - last_tomogram_rebuild;
+      if (!planner.has_tomogram() || since >= tomogram_rebuild_period) {
+        std::printf("[PCT] Rebuilding tomogram from %zu points\n",
+                    cloud_xyz.size() / 3);
+        planner.BuildTomogramFromCloud(cloud_xyz.data(),
+                                       cloud_xyz.size() / 3);
+        last_tomogram_rebuild = std::chrono::steady_clock::now();
+        has_plan = false;
+      }
     }
 
     if (goal_pending) {
