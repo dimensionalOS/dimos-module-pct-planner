@@ -198,7 +198,11 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
   }
   if (traj.rows() == 0) return Eigen::MatrixXd();
 
-  const int y_idx = (static_cast<int>(traj.cols()) - 1) / 2;
+  // GPMP output columns: [x, vx, ax, y, vy, ay]. The reference Python does
+  // `np.concatenate([traj, layers], axis=-1)` and then uses
+  // `y_idx = (cols - 1) // 2` against the 7-col matrix, which picks col 3.
+  // Against the raw 6-col matrix that simplifies to `cols / 2`.
+  const int y_idx = static_cast<int>(traj.cols()) / 2;
   const int n = static_cast<int>(traj.rows());
   Eigen::MatrixXd traj_3d(n, 3);
 
