@@ -8,7 +8,14 @@
 namespace pct {
 
 namespace {
-constexpr int kMapDimPaddingCells = 4;  // ros-nav uses +4 cells, not a metric padding
+// Metric padding added to each side of the observed cloud bounding box
+// when sizing the tomogram grid. Run13 (bcca698) used +2m here, which
+// gives the A* search enough room to route toward goals that lie just
+// outside the current cloud — the subsequent cloud rebuild expands the
+// grid to include them. A tighter +4-cell (0.3 m) padding, tried under
+// commit 0a3b3b3 "fix port fidelity", broke the cross-area legs because
+// goals beyond the current scan ended up on cost_barrier edge cells.
+constexpr float kCloudPaddingM = 2.0f;
 constexpr double kGridStep = 0.2;  // step_cost_weight for OfflineElePlanner::InitMap
 constexpr float kBigNegSentinel = -100.0f;
 constexpr float kBigPosSentinel = 1e6f;
@@ -69,33 +76,29 @@ void TomogramPlanner::BuildTomogramFromCloud(const float* points,
   if (filtered.empty() || !std::isfinite(min_x)) return;
   const std::size_t n_filtered = filtered.size() / 3;
 
-  // Match ros-nav `pct_planner.py::buildTomogramFromCloud` (lines 85-88):
-  //     map_dim_{x,y} = ceil(span / resolution) + 4
-  //     n_slice_init  = ceil((max_z - min_z) / slice_dh)
-  //     slice_h0      = ground_h + slice_dh
-  //
-  // Previously this function used +2m of metric padding, a fudge-
-  // based n_slice, and `slice_h0 = floor(min_z) - 1.0f`.  The old
-  // slice_h0 left layer 0 below every real point, which turned the
-  // ground layer into an all-NaN sheet downstream (the `be2370e force
-  // waypoint/path z to robot z` commit was patching the symptom at
-  // the output stage).
+  // Grid sizing matches run13 (bcca698): pad the cloud bounding box by
+  // +2 m on every side so goals just outside the current scan still
+  // land inside the grid, and anchor `slice_h0` one meter below the
+  // observed floor so the ground points land in layer 1+ (not layer 0,
+  // which stays as the below-floor "sentinel" layer). This is not what
+  // the upstream `config/pct_planner_params.yaml` does, but upstream's
+  // `slice_h0 = ground_h + slice_dh` left our ground layer all-NaN and
+  // A* refused every plan. Leaving `ground_h` as an unused CLI arg so
+  // the surface stays compatible if upstream changes.
+  (void)ground_h;
   const float cx = 0.5f * (min_x + max_x);
   const float cy = 0.5f * (min_y + max_y);
-  const float span_x = max_x - min_x;
-  const float span_y = max_y - min_y;
-  const int nx = std::max(
-      16, static_cast<int>(std::ceil(span_x / tomo_cfg_.resolution)) + kMapDimPaddingCells);
-  const int ny = std::max(
-      16, static_cast<int>(std::ceil(span_y / tomo_cfg_.resolution)) + kMapDimPaddingCells);
+  const float span_x = (max_x - min_x) + 2.0f * kCloudPaddingM;
+  const float span_y = (max_y - min_y) + 2.0f * kCloudPaddingM;
+  const int nx =
+      std::max(16, static_cast<int>(std::ceil(span_x / tomo_cfg_.resolution)));
+  const int ny =
+      std::max(16, static_cast<int>(std::ceil(span_y / tomo_cfg_.resolution)));
 
-  const float slice_h0 = ground_h + tomo_cfg_.slice_dh;
-  // Slice span runs from `ground_h` (or the observed min_z, whichever
-  // is lower — we never want the cloud to extend below slice 0) up to
-  // `max_z`.  Divide by slice_dh to get the initial slice count.
-  const float slice_span_low = std::min(ground_h, min_z);
+  const float slice_h0 = std::floor(min_z) - 1.0f;
+  const float slice_span = (max_z - slice_h0) + 1.0f;
   const int n_slice = std::max(
-      2, static_cast<int>(std::ceil((max_z - slice_span_low) / tomo_cfg_.slice_dh)));
+      2, static_cast<int>(std::ceil(slice_span / tomo_cfg_.slice_dh)) + 1);
 
   tomogram_.InitMappingEnv(cx, cy, nx, ny, n_slice, slice_h0);
   tomogram_.Run(filtered.data(), n_filtered);
