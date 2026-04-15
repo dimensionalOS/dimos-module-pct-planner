@@ -8,8 +8,7 @@
 namespace pct {
 
 namespace {
-constexpr float kCloudPaddingM = 2.0f;
-constexpr float kGroundHeight = 0.0f;
+constexpr int kMapDimPaddingCells = 4;  // ros-nav uses +4 cells, not a metric padding
 constexpr double kGridStep = 0.2;  // step_cost_weight for OfflineElePlanner::InitMap
 constexpr float kBigNegSentinel = -100.0f;
 constexpr float kBigPosSentinel = 1e6f;
@@ -20,10 +19,17 @@ TomogramPlanner::TomogramPlanner(const PlannerConfig& planner_cfg,
     : planner_cfg_(planner_cfg), tomo_cfg_(tomo_cfg), tomogram_(tomo_cfg) {}
 
 void TomogramPlanner::BuildTomogramFromCloud(const float* points,
-                                             std::size_t n_points) {
+                                             std::size_t n_points,
+                                             float ground_h) {
   if (n_points == 0) return;
 
-  // Compute bounding box in XY + min Z to pick grid dims and slice_h0.
+  // NaN filter + bounding-box pass in one go.  ros-nav's tomogram.py
+  // does `points = points[~cp.isnan(points).any(axis=1)]` before the
+  // kernel runs — we replicate that here by building a filtered copy
+  // and passing it to `Tomogram::Run` below, so the kernel never sees
+  // NaN/Inf coordinates.
+  std::vector<float> filtered;
+  filtered.reserve(n_points * 3);
   float min_x = std::numeric_limits<float>::infinity();
   float max_x = -std::numeric_limits<float>::infinity();
   float min_y = std::numeric_limits<float>::infinity();
@@ -35,6 +41,9 @@ void TomogramPlanner::BuildTomogramFromCloud(const float* points,
     const float py = points[i * 3 + 1];
     const float pz = points[i * 3 + 2];
     if (!std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz)) continue;
+    filtered.push_back(px);
+    filtered.push_back(py);
+    filtered.push_back(pz);
     if (px < min_x) min_x = px;
     if (px > max_x) max_x = px;
     if (py < min_y) min_y = py;
@@ -42,22 +51,39 @@ void TomogramPlanner::BuildTomogramFromCloud(const float* points,
     if (pz < min_z) min_z = pz;
     if (pz > max_z) max_z = pz;
   }
-  if (!std::isfinite(min_x)) return;
+  if (filtered.empty() || !std::isfinite(min_x)) return;
+  const std::size_t n_filtered = filtered.size() / 3;
 
+  // Match ros-nav `pct_planner.py::buildTomogramFromCloud` (lines 85-88):
+  //     map_dim_{x,y} = ceil(span / resolution) + 4
+  //     n_slice_init  = ceil((max_z - min_z) / slice_dh)
+  //     slice_h0      = ground_h + slice_dh
+  //
+  // Previously this function used +2m of metric padding, a fudge-
+  // based n_slice, and `slice_h0 = floor(min_z) - 1.0f`.  The old
+  // slice_h0 left layer 0 below every real point, which turned the
+  // ground layer into an all-NaN sheet downstream (the `be2370e force
+  // waypoint/path z to robot z` commit was patching the symptom at
+  // the output stage).
   const float cx = 0.5f * (min_x + max_x);
   const float cy = 0.5f * (min_y + max_y);
-  const float span_x = (max_x - min_x) + 2.0f * kCloudPaddingM;
-  const float span_y = (max_y - min_y) + 2.0f * kCloudPaddingM;
-  const int nx = std::max(16, static_cast<int>(std::ceil(span_x / tomo_cfg_.resolution)));
-  const int ny = std::max(16, static_cast<int>(std::ceil(span_y / tomo_cfg_.resolution)));
+  const float span_x = max_x - min_x;
+  const float span_y = max_y - min_y;
+  const int nx = std::max(
+      16, static_cast<int>(std::ceil(span_x / tomo_cfg_.resolution)) + kMapDimPaddingCells);
+  const int ny = std::max(
+      16, static_cast<int>(std::ceil(span_y / tomo_cfg_.resolution)) + kMapDimPaddingCells);
 
-  const float slice_h0 = std::floor(min_z) - 1.0f;
-  const float slice_span = (max_z - slice_h0) + 1.0f;
+  const float slice_h0 = ground_h + tomo_cfg_.slice_dh;
+  // Slice span runs from `ground_h` (or the observed min_z, whichever
+  // is lower — we never want the cloud to extend below slice 0) up to
+  // `max_z`.  Divide by slice_dh to get the initial slice count.
+  const float slice_span_low = std::min(ground_h, min_z);
   const int n_slice = std::max(
-      2, static_cast<int>(std::ceil(slice_span / tomo_cfg_.slice_dh)) + 1);
+      2, static_cast<int>(std::ceil((max_z - slice_span_low) / tomo_cfg_.slice_dh)));
 
   tomogram_.InitMappingEnv(cx, cy, nx, ny, n_slice, slice_h0);
-  tomogram_.Run(points, n_points);
+  tomogram_.Run(filtered.data(), n_filtered);
 
   center_ = Eigen::Vector2d(cx, cy);
   map_dim_ = {nx, ny};

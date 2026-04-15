@@ -111,12 +111,17 @@ void print_help(const char* argv0) {
       "Tomogram parameters:\n"
       "  --resolution FLOAT            Grid resolution (m)\n"
       "  --slice_dh FLOAT              Slice spacing (m)\n"
+      "  --ground_h FLOAT              Ground reference height (m). slice 0 covers\n"
+      "                                [ground_h, ground_h + slice_dh).\n"
       "  --slope_max FLOAT             Max stand-on slope (rad)\n"
       "  --step_max FLOAT              Max step-over height (m)\n"
       "  --cost_barrier FLOAT          Traversability cost for blocked cells\n"
       "  --kernel_size INT             Traversability kernel size (odd)\n"
       "  --safe_margin FLOAT           Inflation safe margin (m)\n"
       "  --inflation FLOAT             Inflation radius (m)\n"
+      "  --interval_min FLOAT          Minimum vertical clearance (m)\n"
+      "  --interval_free FLOAT         Free-space interval threshold (m)\n"
+      "  --standable_ratio FLOAT       Standable neighbor fraction [0,1]\n"
       "\n"
       "Planner parameters:\n"
       "  --lookahead_distance FLOAT    Waypoint lookahead distance (m)\n"
@@ -143,18 +148,29 @@ int main(int argc, char** argv) {
 
   dimos::NativeModule mod(argc, argv);
 
+  // Defaults below mirror
+  // `ros-navigation-autonomy-stack/src/route_planner/PCT_planner/config/pct_planner_params.yaml`
+  // — the authoritative reference config used by the upstream ROS 2
+  // launch.  An earlier version of this file used the values from
+  // `pct_planner_node.py::declare_parameter(...)` instead, which are the
+  // "no yaml loaded" fallbacks, not the real defaults.  The yaml values
+  // were tuned for the mecanum-wheel T-Bot and should be preserved
+  // unless a caller overrides them.
   pct::TomogramConfig tomo_cfg;
-  tomo_cfg.resolution = mod.arg_float("resolution", 0.3f);
-  tomo_cfg.slice_dh = mod.arg_float("slice_dh", 0.5f);
-  tomo_cfg.slope_max = mod.arg_float("slope_max", 0.40f);
-  tomo_cfg.step_max = mod.arg_float("step_max", 0.3f);
-  tomo_cfg.cost_barrier = mod.arg_float("cost_barrier", 50.0f);
-  tomo_cfg.kernel_size = mod.arg_int("kernel_size", 5);
-  tomo_cfg.safe_margin = mod.arg_float("safe_margin", 0.3f);
-  tomo_cfg.inflation = mod.arg_float("inflation", 0.2f);
-  tomo_cfg.interval_min = mod.arg_float("interval_min", 0.5f);
-  tomo_cfg.interval_free = mod.arg_float("interval_free", 0.65f);
-  tomo_cfg.standable_ratio = mod.arg_float("standable_ratio", 0.5f);
+  tomo_cfg.resolution = mod.arg_float("resolution", 0.075f);
+  tomo_cfg.slice_dh = mod.arg_float("slice_dh", 0.4f);
+  tomo_cfg.slope_max = mod.arg_float("slope_max", 0.45f);
+  tomo_cfg.step_max = mod.arg_float("step_max", 0.5f);
+  tomo_cfg.cost_barrier = mod.arg_float("cost_barrier", 100.0f);
+  tomo_cfg.kernel_size = mod.arg_int("kernel_size", 11);
+  tomo_cfg.safe_margin = mod.arg_float("safe_margin", 0.025f);
+  tomo_cfg.inflation = mod.arg_float("inflation", 0.05f);
+  tomo_cfg.interval_min = mod.arg_float("interval_min", 0.3f);
+  tomo_cfg.interval_free = mod.arg_float("interval_free", 0.5f);
+  tomo_cfg.standable_ratio = mod.arg_float("standable_ratio", 0.02f);
+  // Ground height reference — upstream anchors slice_h0 to this value,
+  // not to the cloud's observed min_z.  Default 0.0f matches the yaml.
+  const float ground_h = mod.arg_float("ground_h", 0.0f);
 
   pct::PlannerConfig planner_cfg;
   planner_cfg.astar_cost_threshold =
@@ -165,7 +181,7 @@ int main(int argc, char** argv) {
       mod.arg_float("max_heading_rate", static_cast<float>(planner_cfg.max_heading_rate));
   planner_cfg.use_quintic = mod.arg_bool("use_quintic", planner_cfg.use_quintic);
 
-  const double lookahead_dist = mod.arg_float("lookahead_distance", 2.0f);
+  const double lookahead_dist = mod.arg_float("lookahead_distance", 1.25f);
   const float update_rate = mod.arg_float("update_rate", 5.0f);
   const std::string frame_id = mod.arg("frame_id", "map");
 
@@ -243,7 +259,7 @@ int main(int argc, char** argv) {
         std::printf("[PCT] Rebuilding tomogram from %zu points\n",
                     cloud_xyz.size() / 3);
         planner.BuildTomogramFromCloud(cloud_xyz.data(),
-                                       cloud_xyz.size() / 3);
+                                       cloud_xyz.size() / 3, ground_h);
         last_tomogram_rebuild = std::chrono::steady_clock::now();
         has_plan = false;
       }

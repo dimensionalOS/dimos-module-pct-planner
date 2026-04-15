@@ -31,9 +31,19 @@ class TomogramPlanner {
   TomogramPlanner(const PlannerConfig& planner_cfg, const TomogramConfig& tomo_cfg);
 
   // Build a tomogram from a point cloud and install it in the underlying
-  // ele_planner. The grid is centered on the point cloud's bounding box
-  // center, sized to span the extents + 2m padding.
-  void BuildTomogramFromCloud(const float* points, std::size_t n_points);
+  // ele_planner.  The grid is centered on the cloud's bounding-box
+  // center and sized to match ros-nav's PCT_planner:
+  //
+  //     map_dim_{x,y} = ceil(span / resolution) + 4   (cells of padding)
+  //     n_slice_init  = ceil((max_z - min_z) / slice_dh)
+  //     slice_h0      = ground_h + slice_dh
+  //
+  // ``ground_h`` is the scene's reference floor height — the first
+  // slice covers ``[ground_h, ground_h + slice_dh)`` so layer 0 picks
+  // up the real ground rather than an empty air-gap below it.  Set
+  // ``ground_h`` to the cloud's actual floor Z (usually 0).
+  void BuildTomogramFromCloud(const float* points, std::size_t n_points,
+                              float ground_h = 0.0f);
 
   // Plan a 3D path from start to goal (map coordinates, meters). Returns an
   // Nx3 matrix of [x, y, z] in map frame, or an empty matrix if planning
