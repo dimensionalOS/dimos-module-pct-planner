@@ -23,6 +23,10 @@ Tomogram::Tomogram(const TomogramConfig& cfg) : cfg_(cfg) {
 
 void Tomogram::InitMappingEnv(float center_x, float center_y, int map_dim_x,
                               int map_dim_y, int n_slice_init, float slice_h0) {
+  const bool dims_changed = (map_dim_x != map_dim_x_) ||
+                            (map_dim_y != map_dim_y_) ||
+                            (n_slice_init != n_slice_init_);
+
   center_[0] = center_x;
   center_[1] = center_y;
   map_dim_x_ = map_dim_x;
@@ -30,14 +34,19 @@ void Tomogram::InitMappingEnv(float center_x, float center_y, int map_dim_x,
   n_slice_init_ = n_slice_init;
   slice_h0_ = slice_h0;
 
-  const std::size_t voxels =
-      static_cast<std::size_t>(n_slice_init_) * map_dim_x_ * map_dim_y_;
-  layers_g_.assign(voxels, 0.0f);
-  layers_c_.assign(voxels, 0.0f);
-  grad_mag_sq_.assign(voxels, 0.0f);
-  grad_mag_max_.assign(voxels, 0.0f);
-  trav_cost_.assign(voxels, 0.0f);
-  inflated_cost_.assign(voxels, 0.0f);
+  // Only reallocate when the grid shape changes. Rebuilds at ~1 Hz with
+  // identical dimensions reuse the existing buffers — ClearMap() resets
+  // the content, Run() overwrites everything else.
+  if (dims_changed) {
+    const std::size_t voxels =
+        static_cast<std::size_t>(n_slice_init_) * map_dim_x_ * map_dim_y_;
+    layers_g_.assign(voxels, 0.0f);
+    layers_c_.assign(voxels, 0.0f);
+    grad_mag_sq_.assign(voxels, 0.0f);
+    grad_mag_max_.assign(voxels, 0.0f);
+    trav_cost_.assign(voxels, 0.0f);
+    inflated_cost_.assign(voxels, 0.0f);
+  }
 
   InitKernels();
 }
@@ -134,6 +143,12 @@ void Tomogram::Run(const float* points, std::size_t n_points) {
                           inflated_cost_.data(), n_slice_init_);
 
   // Layer simplification — keep slices that introduce new reachable regions.
+  // NOTE: The loop bound `m_idx < n_slice_init_ - 2` and the unconditional
+  // final `idx_simp.push_back(m_idx)` are a faithful port of
+  // `tomogram.py::Tomogram.Run`. For `n_slice_init_ >= 3` this means the
+  // topmost slice (index `n_slice_init_ - 1`) is never considered as a
+  // unique layer — matching upstream behavior. Do not "fix" without also
+  // validating against the reference.
   std::vector<int> idx_simp;
   idx_simp.push_back(0);
   if (n_slice_init_ > 1) {

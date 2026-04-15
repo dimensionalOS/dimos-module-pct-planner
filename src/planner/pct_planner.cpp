@@ -12,6 +12,21 @@ constexpr int kMapDimPaddingCells = 4;  // ros-nav uses +4 cells, not a metric p
 constexpr double kGridStep = 0.2;  // step_cost_weight for OfflineElePlanner::InitMap
 constexpr float kBigNegSentinel = -100.0f;
 constexpr float kBigPosSentinel = 1e6f;
+
+// GPMP trajectory column layout: [x, vx, ax, y, vy, ay] (6 columns).
+// The reference Python does `np.concatenate([traj, layers], axis=-1)` then
+// picks `y_idx = (cols - 1) // 2` against the 7-col matrix, which lands on
+// col 3. Against the raw 6-col matrix that's `cols / 2`. Hard-code the
+// constants so a future schema change doesn't silently pick an accel
+// column (this was issue (d) in the run13 debug log).
+constexpr int kGpmpColX = 0;
+constexpr int kGpmpColY = 3;
+
+// Waist-height offset (meters) added to the planned z so downstream
+// visualizers show the path at the robot's body centerline instead of
+// the ground plane. Matches the `+ 0.5` in the reference
+// `transTrajGrid2Map` in planner_wrapper.py.
+constexpr double kWaistHeightOffset = 0.5;
 }  // namespace
 
 TomogramPlanner::TomogramPlanner(const PlannerConfig& planner_cfg,
@@ -172,9 +187,22 @@ void TomogramPlanner::InitEleplannerFromTomogram() {
 
 Eigen::Vector2i TomogramPlanner::Pos2Idx(const Eigen::Vector2d& pos) const {
   const Eigen::Vector2d rel = pos - center_;
-  const int ix = static_cast<int>(std::lround(rel.x() / resolution_)) + offset_[0];
-  const int iy = static_cast<int>(std::lround(rel.y() / resolution_)) + offset_[1];
-  return {iy, ix};  // Reference flips axes to match the planner's layout.
+  int ix = static_cast<int>(std::lround(rel.x() / resolution_)) + offset_[0];
+  int iy = static_cast<int>(std::lround(rel.y() / resolution_)) + offset_[1];
+  // Clamp to grid. Out-of-grid start/goal would otherwise feed negative or
+  // >= map_dim indices to the A* search, producing undefined behavior
+  // inside OfflineElePlanner::Plan.
+  if (ix < 0) ix = 0;
+  if (iy < 0) iy = 0;
+  if (ix >= map_dim_[0]) ix = map_dim_[0] - 1;
+  if (iy >= map_dim_[1]) iy = map_dim_[1] - 1;
+  // Axis swap: the tomogram stores [slice, x_map, y_map] but the A* /
+  // ele_planner index convention is [slice, row, col] where row = y_map
+  // and col = x_map. Reference `planner_wrapper.py::Pos2Idx` returns
+  // `(iy, ix)` — this was the source of the transTrajGrid2Map column
+  // confusion during bring-up. Treat `ix` / `iy` here as map-frame
+  // coordinates, and the `(iy, ix)` swap as the bridge to planner frame.
+  return {iy, ix};
 }
 
 Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
@@ -223,24 +251,24 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
     heights = optimizer.GetResultHeight();
   }
   if (traj.rows() == 0) return Eigen::MatrixXd();
+  if (traj.cols() <= kGpmpColY) {
+    // Schema changed — don't silently produce garbage trajectories.
+    return Eigen::MatrixXd();
+  }
 
-  // GPMP output columns: [x, vx, ax, y, vy, ay]. The reference Python does
-  // `np.concatenate([traj, layers], axis=-1)` and then uses
-  // `y_idx = (cols - 1) // 2` against the 7-col matrix, which picks col 3.
-  // Against the raw 6-col matrix that simplifies to `cols / 2`.
-  const int y_idx = static_cast<int>(traj.cols()) / 2;
   const int n = static_cast<int>(traj.rows());
   Eigen::MatrixXd traj_3d(n, 3);
 
-  // transTrajGrid2Map port.
+  // transTrajGrid2Map port: grid indices → map-frame metric coordinates,
+  // undoing the Pos2Idx offset/axis-swap.
   const double offx = static_cast<double>(map_dim_[1] / 2);
   const double offy = static_cast<double>(map_dim_[0] / 2);
   for (int i = 0; i < n; ++i) {
-    const double gx = traj(i, 0) - offx;
-    const double gy = traj(i, y_idx) - offy;
+    const double gx = traj(i, kGpmpColX) - offx;
+    const double gy = traj(i, kGpmpColY) - offy;
     const double map_x = gy * resolution_ + center_.x();
     const double map_y = gx * resolution_ + center_.y();
-    const double map_z = static_cast<double>(heights(i)) + 0.5;
+    const double map_z = static_cast<double>(heights(i)) + kWaistHeightOffset;
     traj_3d(i, 0) = map_x;
     traj_3d(i, 1) = map_y;
     traj_3d(i, 2) = map_z;

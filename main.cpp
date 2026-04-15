@@ -148,42 +148,46 @@ int main(int argc, char** argv) {
 
   dimos::NativeModule mod(argc, argv);
 
-  // Defaults below mirror
-  // `ros-navigation-autonomy-stack/src/route_planner/PCT_planner/config/pct_planner_params.yaml`
-  // — the authoritative reference config used by the upstream ROS 2
-  // launch.  An earlier version of this file used the values from
-  // `pct_planner_node.py::declare_parameter(...)` instead, which are the
-  // "no yaml loaded" fallbacks, not the real defaults.  The yaml values
-  // were tuned for the mecanum-wheel T-Bot and should be preserved
-  // unless a caller overrides them.
+  // Defaults mirror `PCTPlannerConfig` in
+  // `dimos/navigation/smart_nav/modules/pct_planner/pct_planner.py`.
+  // The Python side always emits every field via `to_cli_args()`, so these
+  // fallbacks only matter for standalone invocations — but they must stay
+  // in sync with the Python defaults to avoid misleading readers.
   pct::TomogramConfig tomo_cfg;
-  tomo_cfg.resolution = mod.arg_float("resolution", 0.075f);
-  tomo_cfg.slice_dh = mod.arg_float("slice_dh", 0.4f);
-  tomo_cfg.slope_max = mod.arg_float("slope_max", 0.45f);
-  tomo_cfg.step_max = mod.arg_float("step_max", 0.5f);
-  tomo_cfg.cost_barrier = mod.arg_float("cost_barrier", 100.0f);
-  tomo_cfg.kernel_size = mod.arg_int("kernel_size", 11);
-  tomo_cfg.safe_margin = mod.arg_float("safe_margin", 0.025f);
-  tomo_cfg.inflation = mod.arg_float("inflation", 0.05f);
-  tomo_cfg.interval_min = mod.arg_float("interval_min", 0.3f);
-  tomo_cfg.interval_free = mod.arg_float("interval_free", 0.5f);
-  tomo_cfg.standable_ratio = mod.arg_float("standable_ratio", 0.02f);
-  // Ground height reference — upstream anchors slice_h0 to this value,
-  // not to the cloud's observed min_z.  Default 0.0f matches the yaml.
-  const float ground_h = mod.arg_float("ground_h", 0.0f);
-
+  float ground_h = 0.0f;
+  double lookahead_dist = 1.25;
+  float update_rate = 5.0f;
+  std::string frame_id = "map";
   pct::PlannerConfig planner_cfg;
-  planner_cfg.astar_cost_threshold =
-      mod.arg_float("astar_cost_threshold", static_cast<float>(planner_cfg.astar_cost_threshold));
-  planner_cfg.safe_cost_margin =
-      mod.arg_float("safe_cost_margin", static_cast<float>(planner_cfg.safe_cost_margin));
-  planner_cfg.max_heading_rate =
-      mod.arg_float("max_heading_rate", static_cast<float>(planner_cfg.max_heading_rate));
-  planner_cfg.use_quintic = mod.arg_bool("use_quintic", planner_cfg.use_quintic);
+  try {
+    tomo_cfg.resolution = mod.arg_float("resolution", 0.075f);
+    tomo_cfg.slice_dh = mod.arg_float("slice_dh", 0.4f);
+    tomo_cfg.slope_max = mod.arg_float("slope_max", 0.45f);
+    tomo_cfg.step_max = mod.arg_float("step_max", 0.5f);
+    tomo_cfg.cost_barrier = mod.arg_float("cost_barrier", 100.0f);
+    tomo_cfg.kernel_size = mod.arg_int("kernel_size", 11);
+    tomo_cfg.safe_margin = mod.arg_float("safe_margin", 0.3f);
+    tomo_cfg.inflation = mod.arg_float("inflation", 0.2f);
+    tomo_cfg.interval_min = mod.arg_float("interval_min", 0.5f);
+    tomo_cfg.interval_free = mod.arg_float("interval_free", 0.65f);
+    tomo_cfg.standable_ratio = mod.arg_float("standable_ratio", 0.5f);
+    ground_h = mod.arg_float("ground_h", 0.0f);
 
-  const double lookahead_dist = mod.arg_float("lookahead_distance", 1.25f);
-  const float update_rate = mod.arg_float("update_rate", 5.0f);
-  const std::string frame_id = mod.arg("frame_id", "map");
+    planner_cfg.astar_cost_threshold = mod.arg_float(
+        "astar_cost_threshold", static_cast<float>(planner_cfg.astar_cost_threshold));
+    planner_cfg.safe_cost_margin = mod.arg_float(
+        "safe_cost_margin", static_cast<float>(planner_cfg.safe_cost_margin));
+    planner_cfg.max_heading_rate = mod.arg_float(
+        "max_heading_rate", static_cast<float>(planner_cfg.max_heading_rate));
+    planner_cfg.use_quintic = mod.arg_bool("use_quintic", planner_cfg.use_quintic);
+
+    lookahead_dist = mod.arg_float("lookahead_distance", 1.25f);
+    update_rate = mod.arg_float("update_rate", 5.0f);
+    frame_id = mod.arg("frame_id", "map");
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[PCT] ERROR: failed to parse CLI args: %s\n", e.what());
+    return 1;
+  }
 
   pct::TomogramPlanner planner(planner_cfg, tomo_cfg);
 
@@ -236,36 +240,47 @@ int main(int argc, char** argv) {
     if (now - last_plan_time < plan_period) continue;
     last_plan_time = now;
 
-    bool odom_ok, cloud_pending, goal_pending;
+    // Decide up front whether this iteration will consume a pending cloud.
+    // Rebuilds are ~1 s each, so we throttle them; if the throttle says
+    // "not yet", leave the cloud in state for the next iteration instead
+    // of silently dropping it.
+    const bool may_rebuild_tomogram =
+        !planner.has_tomogram() ||
+        (std::chrono::steady_clock::now() - last_tomogram_rebuild) >=
+            tomogram_rebuild_period;
+
+    bool odom_ok, consumed_cloud, consumed_goal;
     Eigen::Vector3d robot_pos, goal;
     std::vector<float> cloud_xyz;
     {
       std::lock_guard<std::mutex> lk(state.mu);
       odom_ok = state.odom_init;
-      cloud_pending = state.cloud_pending;
-      goal_pending = state.goal_pending;
       robot_pos = state.robot_pos;
       goal = state.goal;
-      if (cloud_pending) {
+      // Consume the goal atomically — clearing goal_pending here prevents
+      // a new goal that lands during Plan() from being lost by a later
+      // unconditional clear.
+      consumed_goal = state.goal_pending;
+      if (consumed_goal) state.goal_pending = false;
+      // Only move the cloud out of state if we intend to rebuild this
+      // iteration; otherwise the next iteration will see it again.
+      consumed_cloud = state.cloud_pending && may_rebuild_tomogram;
+      if (consumed_cloud) {
         cloud_xyz = std::move(state.cloud_xyz);
         state.cloud_pending = false;
       }
     }
 
-    if (cloud_pending) {
-      const auto since =
-          std::chrono::steady_clock::now() - last_tomogram_rebuild;
-      if (!planner.has_tomogram() || since >= tomogram_rebuild_period) {
-        std::printf("[PCT] Rebuilding tomogram from %zu points\n",
-                    cloud_xyz.size() / 3);
-        planner.BuildTomogramFromCloud(cloud_xyz.data(),
-                                       cloud_xyz.size() / 3, ground_h);
-        last_tomogram_rebuild = std::chrono::steady_clock::now();
-        has_plan = false;
-      }
+    if (consumed_cloud) {
+      std::printf("[PCT] Rebuilding tomogram from %zu points\n",
+                  cloud_xyz.size() / 3);
+      planner.BuildTomogramFromCloud(cloud_xyz.data(),
+                                     cloud_xyz.size() / 3, ground_h);
+      last_tomogram_rebuild = std::chrono::steady_clock::now();
+      has_plan = false;
     }
 
-    if (goal_pending) {
+    if (consumed_goal) {
       active_goal = goal;
       have_goal = true;
       has_plan = false;
@@ -294,7 +309,10 @@ int main(int argc, char** argv) {
           ps.header = path_msg.header;
           ps.pose.position.x = current_path(i, 0);
           ps.pose.position.y = current_path(i, 1);
-          ps.pose.position.z = robot_pos.z();
+          // Publish the real planned z so multi-floor visualizers see the
+          // correct 3D path. Only the waypoint (below) is flattened to
+          // robot z for the local planner's terrain-band filter.
+          ps.pose.position.z = current_path(i, 2);
           ps.pose.orientation.w = 1.0;
         }
         lcm.publish(topic_path, &path_msg);
@@ -309,10 +327,6 @@ int main(int argc, char** argv) {
       } else {
         std::printf("[PCT] Plan failed\n");
       }
-    }
-    if (goal_pending) {
-      std::lock_guard<std::mutex> lk(state.mu);
-      state.goal_pending = false;
     }
 
     if (has_plan && odom_ok) {
