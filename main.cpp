@@ -111,8 +111,6 @@ void print_help(const char* argv0) {
       "Tomogram parameters:\n"
       "  --resolution FLOAT            Grid resolution (m)\n"
       "  --slice_dh FLOAT              Slice spacing (m)\n"
-      "  --ground_h FLOAT              Ground reference height (m). slice 0 covers\n"
-      "                                [ground_h, ground_h + slice_dh).\n"
       "  --slope_max FLOAT             Max stand-on slope (rad)\n"
       "  --step_max FLOAT              Max step-over height (m)\n"
       "  --cost_barrier FLOAT          Traversability cost for blocked cells\n"
@@ -126,6 +124,20 @@ void print_help(const char* argv0) {
       "Planner parameters:\n"
       "  --lookahead_distance FLOAT    Waypoint lookahead distance (m)\n"
       "  --update_rate FLOAT           Plan/publish loop rate (Hz)\n"
+      "  --tomogram_rebuild_period_sec FLOAT  Minimum seconds between tomogram\n"
+      "                                rebuilds (0 = rebuild every iteration).\n"
+      "                                Rebuilds are expensive so the default of\n"
+      "                                1.0 s caps the cost while still tracking\n"
+      "                                exploration. Required because our live\n"
+      "                                `explored_areas` publish rate (~10 Hz)\n"
+      "                                is much faster than the ~1 s rebuild.\n"
+      "  --min_plan_half_extent_m FLOAT Superset: expand the tomogram grid to\n"
+      "                                include at least a square of this half-\n"
+      "                                extent around the robot, even if the\n"
+      "                                observed cloud is smaller. 0 = strict\n"
+      "                                upstream behavior (grid sized to cloud\n"
+      "                                bbox + 4 cells). Required for live maps\n"
+      "                                that start small and grow.\n"
       "  --frame_id STRING             World frame id for published headers\n"
       "  --help                        Print this help and exit\n",
       argv0);
@@ -148,15 +160,14 @@ int main(int argc, char** argv) {
 
   dimos::NativeModule mod(argc, argv);
 
-  // Defaults mirror `PCTPlannerConfig` in
-  // `dimos/navigation/smart_nav/modules/pct_planner/pct_planner.py`.
-  // The Python side always emits every field via `to_cli_args()`, so these
-  // fallbacks only matter for standalone invocations — but they must stay
-  // in sync with the Python defaults to avoid misleading readers.
+  // Defaults mirror the upstream `pct_planner_params.yaml`. The Python
+  // `PCTPlannerConfig` always emits every field via `to_cli_args()`, so
+  // these fallbacks only matter for standalone invocations.
   pct::TomogramConfig tomo_cfg;
-  float ground_h = 0.0f;
   double lookahead_dist = 1.25;
   float update_rate = 5.0f;
+  float tomogram_rebuild_period_sec = 1.0f;
+  float min_plan_half_extent_m = 15.0f;
   std::string frame_id = "map";
   pct::PlannerConfig planner_cfg;
   try {
@@ -166,12 +177,11 @@ int main(int argc, char** argv) {
     tomo_cfg.step_max = mod.arg_float("step_max", 0.5f);
     tomo_cfg.cost_barrier = mod.arg_float("cost_barrier", 100.0f);
     tomo_cfg.kernel_size = mod.arg_int("kernel_size", 11);
-    tomo_cfg.safe_margin = mod.arg_float("safe_margin", 0.3f);
-    tomo_cfg.inflation = mod.arg_float("inflation", 0.2f);
-    tomo_cfg.interval_min = mod.arg_float("interval_min", 0.5f);
-    tomo_cfg.interval_free = mod.arg_float("interval_free", 0.65f);
-    tomo_cfg.standable_ratio = mod.arg_float("standable_ratio", 0.5f);
-    ground_h = mod.arg_float("ground_h", 0.0f);
+    tomo_cfg.safe_margin = mod.arg_float("safe_margin", 0.025f);
+    tomo_cfg.inflation = mod.arg_float("inflation", 0.05f);
+    tomo_cfg.interval_min = mod.arg_float("interval_min", 0.3f);
+    tomo_cfg.interval_free = mod.arg_float("interval_free", 0.5f);
+    tomo_cfg.standable_ratio = mod.arg_float("standable_ratio", 0.02f);
 
     planner_cfg.astar_cost_threshold = mod.arg_float(
         "astar_cost_threshold", static_cast<float>(planner_cfg.astar_cost_threshold));
@@ -183,6 +193,9 @@ int main(int argc, char** argv) {
 
     lookahead_dist = mod.arg_float("lookahead_distance", 1.25f);
     update_rate = mod.arg_float("update_rate", 5.0f);
+    tomogram_rebuild_period_sec =
+        mod.arg_float("tomogram_rebuild_period_sec", 1.0f);
+    min_plan_half_extent_m = mod.arg_float("min_plan_half_extent_m", 15.0f);
     frame_id = mod.arg("frame_id", "map");
   } catch (const std::exception& e) {
     std::fprintf(stderr, "[PCT] ERROR: failed to parse CLI args: %s\n", e.what());
@@ -221,10 +234,14 @@ int main(int argc, char** argv) {
   bool has_plan = false;
   bool have_goal = false;
   Eigen::Vector3d active_goal = Eigen::Vector3d::Zero();
-  // Throttle tomogram rebuilds — PreloadedMapTracker publishes explored_areas
-  // at ~10 Hz but rebuilding the grid is ~1 s. Cap to 1 Hz so the main loop
-  // stays responsive for waypoint publishing.
-  const auto tomogram_rebuild_period = std::chrono::seconds(1);
+  // Throttle tomogram rebuilds — PreloadedMapTracker publishes
+  // explored_areas at ~10 Hz but rebuilding the grid is ~1 s, so we cap
+  // the rebuild rate from the CLI. Set `--tomogram_rebuild_period_sec 0`
+  // to rebuild on every iteration (matches upstream behavior when the
+  // tomogram is loaded from a static pickle file).
+  const auto tomogram_rebuild_period =
+      std::chrono::milliseconds(static_cast<int>(
+          std::max(0.0f, tomogram_rebuild_period_sec) * 1000.0f));
   auto last_tomogram_rebuild =
       std::chrono::steady_clock::now() - tomogram_rebuild_period;
 
@@ -275,7 +292,8 @@ int main(int argc, char** argv) {
       std::printf("[PCT] Rebuilding tomogram from %zu points\n",
                   cloud_xyz.size() / 3);
       planner.BuildTomogramFromCloud(cloud_xyz.data(),
-                                     cloud_xyz.size() / 3, ground_h);
+                                     cloud_xyz.size() / 3, robot_pos,
+                                     min_plan_half_extent_m);
       last_tomogram_rebuild = std::chrono::steady_clock::now();
       has_plan = false;
     }
@@ -341,11 +359,15 @@ int main(int argc, char** argv) {
         wp_msg.header = dimos::make_header(frame_id, ts);
         wp_msg.point.x = wp[0];
         wp_msg.point.y = wp[1];
-        // Ground-plane waypoint: the local planner only consumes x/y, but
-        // uses the waypoint z against its terrain-band filter. Mirror FAR
-        // and force robot's z so a slightly-elevated tomogram height
-        // doesn't push the waypoint outside the traversable band.
-        wp_msg.point.z = robot_pos.z();
+        // Publish the planned z. For multi-floor scenes this carries
+        // the target floor's height; the local planner's terrain-band
+        // filter is compared against the robot's own pose, and
+        // reasonable stairs/ramps (gradient ≤ max_relative_z per
+        // `lookahead_distance`) stay inside the band. If a waypoint at
+        // the target z lies outside the local planner's `max_relative_z`
+        // window, that's a genuine "cannot reach this floor directly"
+        // signal rather than something to hide by flattening z here.
+        wp_msg.point.z = wp[2];
         lcm.publish(topic_wp, &wp_msg);
       }
     }

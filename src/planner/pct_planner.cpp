@@ -8,14 +8,10 @@
 namespace pct {
 
 namespace {
-// Metric padding added to each side of the observed cloud bounding box
-// when sizing the tomogram grid. Run13 (bcca698) used +2m here, which
-// gives the A* search enough room to route toward goals that lie just
-// outside the current cloud — the subsequent cloud rebuild expands the
-// grid to include them. A tighter +4-cell (0.3 m) padding, tried under
-// commit 0a3b3b3 "fix port fidelity", broke the cross-area legs because
-// goals beyond the current scan ended up on cost_barrier edge cells.
-constexpr float kCloudPaddingM = 2.0f;
+// Padding applied after unioning the cloud bbox with the planning
+// horizon — matches ros-nav's reference `+4` (see
+// `pct_planner.py::buildTomogramFromCloud` line 85-86).
+constexpr int kMapDimPaddingCells = 4;
 constexpr double kGridStep = 0.2;  // step_cost_weight for OfflineElePlanner::InitMap
 constexpr float kBigNegSentinel = -100.0f;
 constexpr float kBigPosSentinel = 1e6f;
@@ -42,14 +38,14 @@ TomogramPlanner::TomogramPlanner(const PlannerConfig& planner_cfg,
 
 void TomogramPlanner::BuildTomogramFromCloud(const float* points,
                                              std::size_t n_points,
-                                             float ground_h) {
+                                             const Eigen::Vector3d& robot_pos,
+                                             float min_plan_half_extent_m) {
   if (n_points == 0) return;
 
-  // NaN filter + bounding-box pass in one go.  ros-nav's tomogram.py
-  // does `points = points[~cp.isnan(points).any(axis=1)]` before the
-  // kernel runs — we replicate that here by building a filtered copy
-  // and passing it to `Tomogram::Run` below, so the kernel never sees
-  // NaN/Inf coordinates.
+  // NaN filter + bounding-box pass in one go. ros-nav's tomogram.py
+  // (`tomogram.py:122`) does `points = points[~cp.isnan(points).any(...)]`
+  // before the kernel runs — replicate by building a filtered copy and
+  // passing that to `Tomogram::Run`.
   std::vector<float> filtered;
   filtered.reserve(n_points * 3);
   float min_x = std::numeric_limits<float>::infinity();
@@ -76,29 +72,41 @@ void TomogramPlanner::BuildTomogramFromCloud(const float* points,
   if (filtered.empty() || !std::isfinite(min_x)) return;
   const std::size_t n_filtered = filtered.size() / 3;
 
-  // Grid sizing matches run13 (bcca698): pad the cloud bounding box by
-  // +2 m on every side so goals just outside the current scan still
-  // land inside the grid, and anchor `slice_h0` one meter below the
-  // observed floor so the ground points land in layer 1+ (not layer 0,
-  // which stays as the below-floor "sentinel" layer). This is not what
-  // the upstream `config/pct_planner_params.yaml` does, but upstream's
-  // `slice_h0 = ground_h + slice_dh` left our ground layer all-NaN and
-  // A* refused every plan. Leaving `ground_h` as an unused CLI arg so
-  // the surface stays compatible if upstream changes.
-  (void)ground_h;
+  // Union the observed cloud bbox with a square of `min_plan_half_extent_m`
+  // around the robot. For a preloaded offline map (upstream scenario)
+  // callers pass 0 and the grid matches the reference exactly:
+  //     map_dim_{x,y} = ceil(span / resolution) + 4
+  //     n_slice_init  = ceil((max_z - min_z) / slice_dh)
+  //     slice_h0      = min_z + slice_dh
+  // For our live-growing cloud, callers pass a positive
+  // min_plan_half_extent_m so the grid always reaches at least that far
+  // ahead of the robot and A* has room to route toward goals outside
+  // the current scan.
+  if (min_plan_half_extent_m > 0.0f) {
+    const float rx = static_cast<float>(robot_pos.x());
+    const float ry = static_cast<float>(robot_pos.y());
+    min_x = std::min(min_x, rx - min_plan_half_extent_m);
+    max_x = std::max(max_x, rx + min_plan_half_extent_m);
+    min_y = std::min(min_y, ry - min_plan_half_extent_m);
+    max_y = std::max(max_y, ry + min_plan_half_extent_m);
+  }
+
   const float cx = 0.5f * (min_x + max_x);
   const float cy = 0.5f * (min_y + max_y);
-  const float span_x = (max_x - min_x) + 2.0f * kCloudPaddingM;
-  const float span_y = (max_y - min_y) + 2.0f * kCloudPaddingM;
-  const int nx =
-      std::max(16, static_cast<int>(std::ceil(span_x / tomo_cfg_.resolution)));
-  const int ny =
-      std::max(16, static_cast<int>(std::ceil(span_y / tomo_cfg_.resolution)));
+  const float span_x = max_x - min_x;
+  const float span_y = max_y - min_y;
+  const int nx = std::max(
+      16, static_cast<int>(std::ceil(span_x / tomo_cfg_.resolution)) + kMapDimPaddingCells);
+  const int ny = std::max(
+      16, static_cast<int>(std::ceil(span_y / tomo_cfg_.resolution)) + kMapDimPaddingCells);
 
-  const float slice_h0 = std::floor(min_z) - 1.0f;
-  const float slice_span = (max_z - slice_h0) + 1.0f;
+  // Upstream `pct_planner.py:88`: slice_h0 = min_xyz[2] + slice_dh.
+  // The +slice_dh offset shifts layer 0's "slice ceiling" one slice_dh
+  // above the observed floor, so ground points fall into layer 0's
+  // `layers_g` (below-or-equal branch in the tomography kernel).
+  const float slice_h0 = min_z + tomo_cfg_.slice_dh;
   const int n_slice = std::max(
-      2, static_cast<int>(std::ceil(slice_span / tomo_cfg_.slice_dh)) + 1);
+      2, static_cast<int>(std::ceil((max_z - min_z) / tomo_cfg_.slice_dh)));
 
   tomogram_.InitMappingEnv(cx, cy, nx, ny, n_slice, slice_h0);
   tomogram_.Run(filtered.data(), n_filtered);
@@ -212,18 +220,38 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
                                       const Eigen::Vector3d& goal) {
   if (!tomogram_loaded_ || !ele_planner_) return Eigen::MatrixXd();
 
+  // Z → layer lookup, matching upstream `planner_wrapper.py::plan`:
+  //     layer = clip(round((z - slice_h0) / slice_dh), 0, n_slice - 1)
+  //
+  // NB: `n_slice_` here is the *simplified* layer count (what Tomogram
+  // produces after its layer-simplification loop), and `slice_h0_` /
+  // `slice_dh_` describe the *original* pre-simplification grid.
+  //
+  // We use `goal.z()` for *both* start and goal layer lookups because:
+  // - The robot's odometry z is at sensor/body height, not floor height.
+  //   Feeding that raw z into the lookup places the robot in a different
+  //   simplified layer than the goal (even though they're on the same
+  //   floor), and A* has no gateway between those layers.
+  // - The goal z is user-specified and represents the target floor
+  //   height, which is the semantically correct reference for both
+  //   endpoints in a same-floor navigation request.
+  // - For multi-floor navigation, the caller should set goal.z to the
+  //   target floor height. A*'s gateway logic will handle transitions
+  //   if the start's floor differs.
+  const auto layer_from_z = [this](double z) -> int {
+    if (n_slice_ <= 1) return 0;
+    const double f = (z - slice_h0_) / slice_dh_;
+    int k = static_cast<int>(std::lround(f));
+    if (k < 0) k = 0;
+    if (k >= n_slice_) k = n_slice_ - 1;
+    return k;
+  };
+
   Eigen::Vector3i start_idx;
   Eigen::Vector3i goal_idx;
-
-  // Layer simplification collapses the original tomogram slices down to a
-  // minimal set (often 1 or 2 for single-floor scenes), so a naive
-  // (z - slice_h0) / slice_dh lookup against the *simplified* layer count is
-  // meaningless. Default both ends to the ground layer (layer 0); for
-  // multi-floor the A* traversability+gateway logic will transition up.
-  start_idx[0] = 0;
-  goal_idx[0] = 0;
-  (void)start.z();
-  (void)goal.z();
+  const int goal_layer = layer_from_z(goal.z());
+  start_idx[0] = goal_layer;
+  goal_idx[0] = goal_layer;
 
   const Eigen::Vector2i s2 = Pos2Idx(start.head<2>());
   const Eigen::Vector2i g2 = Pos2Idx(goal.head<2>());
@@ -231,6 +259,46 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
   start_idx[2] = s2.y();
   goal_idx[1] = g2.x();
   goal_idx[2] = g2.y();
+
+  // Debug: print cost at start cell and 8 neighbors so we can see why
+  // A* rejects the start. Remove once the tomogram issue is resolved.
+  {
+    const int layer = start_idx[0];
+    const int sr = start_idx[1];
+    const int sc = start_idx[2];
+    const int nx = map_dim_[0];
+    const int ny = map_dim_[1];
+    const auto& tc = tomogram_.layers_t();
+    const auto& eg = tomogram_.elev_g_out();
+    const int ls = nx * ny;
+    static int dbg_count = 0;
+    if (dbg_count < 3) {
+      std::printf("[PCT-DBG] slice_h0=%.3f slice_dh=%.3f n_slice=%d layer_count=%d\n",
+                  slice_h0_, slice_dh_, n_slice_,
+                  tomogram_.layer_count());
+      std::printf("[PCT-DBG] center=(%.3f,%.3f) offset=(%d,%d) res=%.4f\n",
+                  center_.x(), center_.y(), offset_[0], offset_[1],
+                  resolution_);
+      std::printf("[PCT-DBG] start_pos=(%.3f,%.3f,%.3f) goal_pos=(%.3f,%.3f,%.3f)\n",
+                  start.x(), start.y(), start.z(),
+                  goal.x(), goal.y(), goal.z());
+      std::printf("[PCT-DBG] start_idx=[%d,%d,%d] goal_idx=[%d,%d,%d] nx=%d ny=%d\n",
+                  start_idx[0], start_idx[1], start_idx[2],
+                  goal_idx[0], goal_idx[1], goal_idx[2], nx, ny);
+      for (int dr = -1; dr <= 1; ++dr) {
+        for (int dc = -1; dc <= 1; ++dc) {
+          const int r = sr + dr;
+          const int c = sc + dc;
+          if (r >= 0 && r < nx && c >= 0 && c < ny) {
+            const int idx = layer * ls + r * ny + c;
+            std::printf("[PCT-DBG]   cell[%d,%d] trav=%.2f elev_g=%.4f\n",
+                        r, c, tc[idx], eg[idx]);
+          }
+        }
+      }
+      ++dbg_count;
+    }
+  }
 
   if (!ele_planner_->Plan(start_idx, goal_idx, true)) {
     return Eigen::MatrixXd();

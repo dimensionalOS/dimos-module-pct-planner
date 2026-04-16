@@ -31,19 +31,26 @@ class TomogramPlanner {
   TomogramPlanner(const PlannerConfig& planner_cfg, const TomogramConfig& tomo_cfg);
 
   // Build a tomogram from a point cloud and install it in the underlying
-  // ele_planner.  The grid is centered on the cloud's bounding-box
-  // center and sized to match ros-nav's PCT_planner:
+  // ele_planner. Grid sizing follows the ros-nav PCT_planner reference
+  // (``pct_planner.py::buildTomogramFromCloud``):
   //
   //     map_dim_{x,y} = ceil(span / resolution) + 4   (cells of padding)
   //     n_slice_init  = ceil((max_z - min_z) / slice_dh)
-  //     slice_h0      = ground_h + slice_dh
+  //     slice_h0      = min_xyz[2] + slice_dh
   //
-  // ``ground_h`` is the scene's reference floor height — the first
-  // slice covers ``[ground_h, ground_h + slice_dh)`` so layer 0 picks
-  // up the real ground rather than an empty air-gap below it.  Set
-  // ``ground_h`` to the cloud's actual floor Z (usually 0).
+  // The upstream reference loads a preloaded offline scene map, which is
+  // always large enough to contain the goal. Our scenario accumulates a
+  // live cloud from PreloadedMapTracker that starts small and grows as
+  // the robot explores — a tight +4-cell padding would put any goal
+  // outside the current scan boundary on a cost_barrier edge cell and
+  // A* would refuse. As a superset, callers can pass a non-zero
+  // ``min_plan_half_extent_m``: the cloud bounding box is unioned with a
+  // square of the given half-extent centered on ``robot_pos`` before the
+  // +4-cell padding is applied, guaranteeing the planning grid always
+  // reaches at least that far ahead of the robot.
   void BuildTomogramFromCloud(const float* points, std::size_t n_points,
-                              float ground_h = 0.0f);
+                              const Eigen::Vector3d& robot_pos,
+                              float min_plan_half_extent_m = 0.0f);
 
   // Plan a 3D path from start to goal (map coordinates, meters). Returns an
   // Nx3 matrix of [x, y, z] in map frame, or an empty matrix if planning
