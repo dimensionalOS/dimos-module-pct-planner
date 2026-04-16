@@ -336,20 +336,18 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
   const int n = static_cast<int>(traj.rows());
   Eigen::MatrixXd traj_3d(n, 3);
 
-  // transTrajGrid2Map port: grid indices → map-frame metric coordinates.
-  // GPMP output is in A*'s (j, k) coordinate system:
-  //   col kGpmpColX = A*'s k dimension = iy (physical Y grid index)
-  //   col kGpmpColY = A*'s j dimension = ix (physical X grid index)
-  // So offset col-X by ny/2 (Y offset) and col-Y by nx/2 (X offset),
-  // then map_x comes from the kGpmpColY column (ix → physical X) and
-  // map_y comes from kGpmpColX column (iy → physical Y).
-  const double off_k = static_cast<double>(map_dim_[1] / 2);  // ny/2
-  const double off_j = static_cast<double>(map_dim_[0] / 2);  // nx/2
+  // transTrajGrid2Map: grid indices → map-frame metric coordinates.
+  // With Pos2Idx returning {ix, iy} (no swap), A*'s j = ix and k = iy.
+  // GPMP col kGpmpColX = j = ix (physical X grid index, offset nx/2).
+  // GPMP col kGpmpColY = k = iy (physical Y grid index, offset ny/2).
+  // No axis swap — GPMP x maps directly to physical X, y to physical Y.
+  const double off_x = static_cast<double>(map_dim_[0] / 2);  // nx/2
+  const double off_y = static_cast<double>(map_dim_[1] / 2);  // ny/2
   for (int i = 0; i < n; ++i) {
-    const double gk = traj(i, kGpmpColX) - off_k;   // iy - ny/2
-    const double gj = traj(i, kGpmpColY) - off_j;   // ix - nx/2
-    const double map_x = gj * resolution_ + center_.x();  // ix→X
-    const double map_y = gk * resolution_ + center_.y();  // iy→Y
+    const double gx = traj(i, kGpmpColX) - off_x;   // ix - nx/2
+    const double gy = traj(i, kGpmpColY) - off_y;   // iy - ny/2
+    const double map_x = gx * resolution_ + center_.x();
+    const double map_y = gy * resolution_ + center_.y();
     const double map_z = static_cast<double>(heights(i)) + kWaistHeightOffset;
     traj_3d(i, 0) = map_x;
     traj_3d(i, 1) = map_y;
