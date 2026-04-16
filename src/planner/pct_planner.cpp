@@ -198,22 +198,21 @@ void TomogramPlanner::InitEleplannerFromTomogram() {
 
 Eigen::Vector2i TomogramPlanner::Pos2Idx(const Eigen::Vector2d& pos) const {
   const Eigen::Vector2d rel = pos - center_;
-  int ix = static_cast<int>(std::lround(rel.x() / resolution_)) + offset_[0];
-  int iy = static_cast<int>(std::lround(rel.y() / resolution_)) + offset_[1];
-  // Clamp to grid. Out-of-grid start/goal would otherwise feed negative or
-  // >= map_dim indices to the A* search, producing undefined behavior
-  // inside OfflineElePlanner::Plan.
-  if (ix < 0) ix = 0;
-  if (iy < 0) iy = 0;
-  if (ix >= map_dim_[0]) ix = map_dim_[0] - 1;
-  if (iy >= map_dim_[1]) iy = map_dim_[1] - 1;
-  // Axis swap: the tomogram stores [slice, x_map, y_map] but the A* /
-  // ele_planner index convention is [slice, row, col] where row = y_map
-  // and col = x_map. Reference `planner_wrapper.py::Pos2Idx` returns
-  // `(iy, ix)` — this was the source of the transTrajGrid2Map column
-  // confusion during bring-up. Treat `ix` / `iy` here as map-frame
-  // coordinates, and the `(iy, ix)` swap as the bridge to planner frame.
-  return {iy, ix};
+  const int ix =
+      static_cast<int>(std::lround(rel.x() / resolution_)) + offset_[0];
+  const int iy =
+      static_cast<int>(std::lround(rel.y() / resolution_)) + offset_[1];
+  // Return {ix, iy} — NO axis swap. The tomogram kernel stores cells
+  // as `flat[s * nx*ny + ix * ny + iy]`, and InitEleplannerFromTomogram
+  // copies into cost_map(s*nx + ix, iy). A* sets max_y_ = nx, max_x_ = ny
+  // and indexes grid_map_[layer][j][k] where j = ix, k = iy. Returning
+  // {ix, iy} directly keeps all three in agreement.
+  //
+  // The upstream reference `planner_wrapper.py::pos2idx` returns
+  // `[idx_y, idx_x]` (swapped), but that creates a transpose between
+  // the kernel write location and A*'s read location which only works
+  // when the grid is square (nx == ny) or when layer 0 is all-sentinel.
+  return {ix, iy};
 }
 
 Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
@@ -330,15 +329,20 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
   const int n = static_cast<int>(traj.rows());
   Eigen::MatrixXd traj_3d(n, 3);
 
-  // transTrajGrid2Map port: grid indices → map-frame metric coordinates,
-  // undoing the Pos2Idx offset/axis-swap.
-  const double offx = static_cast<double>(map_dim_[1] / 2);
-  const double offy = static_cast<double>(map_dim_[0] / 2);
+  // transTrajGrid2Map port: grid indices → map-frame metric coordinates.
+  // GPMP output is in A*'s (j, k) coordinate system:
+  //   col kGpmpColX = A*'s k dimension = iy (physical Y grid index)
+  //   col kGpmpColY = A*'s j dimension = ix (physical X grid index)
+  // So offset col-X by ny/2 (Y offset) and col-Y by nx/2 (X offset),
+  // then map_x comes from the kGpmpColY column (ix → physical X) and
+  // map_y comes from kGpmpColX column (iy → physical Y).
+  const double off_k = static_cast<double>(map_dim_[1] / 2);  // ny/2
+  const double off_j = static_cast<double>(map_dim_[0] / 2);  // nx/2
   for (int i = 0; i < n; ++i) {
-    const double gx = traj(i, kGpmpColX) - offx;
-    const double gy = traj(i, kGpmpColY) - offy;
-    const double map_x = gy * resolution_ + center_.x();
-    const double map_y = gx * resolution_ + center_.y();
+    const double gk = traj(i, kGpmpColX) - off_k;   // iy - ny/2
+    const double gj = traj(i, kGpmpColY) - off_j;   // ix - nx/2
+    const double map_x = gj * resolution_ + center_.x();  // ix→X
+    const double map_y = gk * resolution_ + center_.y();  // iy→Y
     const double map_z = static_cast<double>(heights(i)) + kWaistHeightOffset;
     traj_3d(i, 0) = map_x;
     traj_3d(i, 1) = map_y;
