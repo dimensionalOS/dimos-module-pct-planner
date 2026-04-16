@@ -101,10 +101,17 @@ void TomogramPlanner::BuildTomogramFromCloud(const float* points,
       16, static_cast<int>(std::ceil(span_y / tomo_cfg_.resolution)) + kMapDimPaddingCells);
 
   // Upstream `pct_planner.py:88`: slice_h0 = min_xyz[2] + slice_dh.
-  // The +slice_dh offset shifts layer 0's "slice ceiling" one slice_dh
-  // above the observed floor, so ground points fall into layer 0's
-  // `layers_g` (below-or-equal branch in the tomography kernel).
-  const float slice_h0 = min_z + tomo_cfg_.slice_dh;
+  // The offset shifts layer 0's "slice ceiling" above the observed
+  // floor, so ground points fall into `layers_g`. Upstream uses
+  // +1 * slice_dh, which works with their pre-cleaned (statistical +
+  // radius outlier removal) offline cloud but places the boundary at
+  // ~0.4 m above the floor — right where our live cloud has noisy
+  // points straddling ground/ceiling, creating tiny clearance intervals
+  // that trigger cost_barrier. Using +2 * slice_dh pushes the boundary
+  // to ~0.8 m, well above the ground/ceiling transition zone, while
+  // preserving multi-floor layer logic (just shifts all boundaries up
+  // by one slice).
+  const float slice_h0 = min_z + 2.0f * tomo_cfg_.slice_dh;
   const int n_slice = std::max(
       2, static_cast<int>(std::ceil((max_z - min_z) / tomo_cfg_.slice_dh)));
 
