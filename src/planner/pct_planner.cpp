@@ -266,46 +266,6 @@ Eigen::MatrixXd TomogramPlanner::Plan(const Eigen::Vector3d& start,
   goal_idx[1] = g2.x();
   goal_idx[2] = g2.y();
 
-  // Debug: print cost at start cell and 8 neighbors so we can see why
-  // A* rejects the start. Remove once the tomogram issue is resolved.
-  {
-    const int layer = start_idx[0];
-    const int sr = start_idx[1];
-    const int sc = start_idx[2];
-    const int nx = map_dim_[0];
-    const int ny = map_dim_[1];
-    const auto& tc = tomogram_.layers_t();
-    const auto& eg = tomogram_.elev_g_out();
-    const int ls = nx * ny;
-    static int dbg_count = 0;
-    if (dbg_count < 3) {
-      std::printf("[PCT-DBG] slice_h0=%.3f slice_dh=%.3f n_slice=%d layer_count=%d\n",
-                  slice_h0_, slice_dh_, n_slice_,
-                  tomogram_.layer_count());
-      std::printf("[PCT-DBG] center=(%.3f,%.3f) offset=(%d,%d) res=%.4f\n",
-                  center_.x(), center_.y(), offset_[0], offset_[1],
-                  resolution_);
-      std::printf("[PCT-DBG] start_pos=(%.3f,%.3f,%.3f) goal_pos=(%.3f,%.3f,%.3f)\n",
-                  start.x(), start.y(), start.z(),
-                  goal.x(), goal.y(), goal.z());
-      std::printf("[PCT-DBG] start_idx=[%d,%d,%d] goal_idx=[%d,%d,%d] nx=%d ny=%d\n",
-                  start_idx[0], start_idx[1], start_idx[2],
-                  goal_idx[0], goal_idx[1], goal_idx[2], nx, ny);
-      for (int dr = -1; dr <= 1; ++dr) {
-        for (int dc = -1; dc <= 1; ++dc) {
-          const int r = sr + dr;
-          const int c = sc + dc;
-          if (r >= 0 && r < nx && c >= 0 && c < ny) {
-            const int idx = layer * ls + r * ny + c;
-            std::printf("[PCT-DBG]   cell[%d,%d] trav=%.2f elev_g=%.4f\n",
-                        r, c, tc[idx], eg[idx]);
-          }
-        }
-      }
-      ++dbg_count;
-    }
-  }
-
   if (!ele_planner_->Plan(start_idx, goal_idx, true)) {
     return Eigen::MatrixXd();
   }
