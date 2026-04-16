@@ -111,7 +111,13 @@ void TomogramPlanner::BuildTomogramFromCloud(const float* points,
   // to ~0.8 m, well above the ground/ceiling transition zone, while
   // preserving multi-floor layer logic (just shifts all boundaries up
   // by one slice).
-  const float slice_h0 = min_z + 2.0f * tomo_cfg_.slice_dh;
+  // Push the boundary high enough that ALL ground-level features
+  // (steps, furniture, low obstacles) are classified as "ground" in
+  // the tomography kernel, and only walls/ceilings above ~1.2 m are
+  // "ceiling". This keeps layer 0's traversability uniform — the
+  // global planner focuses on multi-floor route planning while the
+  // local planner handles ground-level obstacle avoidance.
+  const float slice_h0 = min_z + 3.0f * tomo_cfg_.slice_dh;
   const int n_slice = std::max(
       2, static_cast<int>(std::ceil((max_z - min_z) / tomo_cfg_.slice_dh)));
 
