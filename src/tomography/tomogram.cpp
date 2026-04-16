@@ -108,6 +108,13 @@ void Tomogram::Run(const float* points, std::size_t n_points) {
   // grad_mag_sq[s, x, y] = max((g[s,x,y]-g[s,x-1,y])^2, (g[s,x,y]-g[s,x+1,y])^2)
   //                     + max((g[s,x,y]-g[s,x,y-1])^2, (g[s,x,y]-g[s,x,y+1])^2)
   // Only written for interior cells (1 <= x <= nx-2, 1 <= y <= ny-2).
+  // Sentinel threshold: values near kBigNeg indicate "no data" and
+  // should not contribute to gradient. Without this guard, the
+  // gradient at cloud/empty boundaries is enormous (0 − (−1e6) = 1e6)
+  // which the trav kernel interprets as a vertical cliff and marks as
+  // cost_barrier. The upstream reference never hits this because it
+  // uses a preloaded scene map that fills the entire grid.
+  constexpr float kSentinelThresh = kBigNeg + 1.0f;
   for (int s = 0; s < n_slice_init_; ++s) {
     const float* g = layers_g_.data() + static_cast<std::size_t>(s) * layer_size;
     float* gsq =
@@ -118,10 +125,15 @@ void Tomogram::Run(const float* points, std::size_t n_points) {
       for (int y = 1; y < ny - 1; ++y) {
         const int idx = x * ny + y;
         const float c = g[idx];
-        const float dxp = c - g[(x - 1) * ny + y];
-        const float dxn = c - g[(x + 1) * ny + y];
-        const float dyp = c - g[x * ny + (y - 1)];
-        const float dyn = c - g[x * ny + (y + 1)];
+        if (c <= kSentinelThresh) continue;
+        const float gxp = g[(x - 1) * ny + y];
+        const float gxn = g[(x + 1) * ny + y];
+        const float gyp = g[x * ny + (y - 1)];
+        const float gyn = g[x * ny + (y + 1)];
+        const float dxp = (gxp > kSentinelThresh) ? (c - gxp) : 0.0f;
+        const float dxn = (gxn > kSentinelThresh) ? (c - gxn) : 0.0f;
+        const float dyp = (gyp > kSentinelThresh) ? (c - gyp) : 0.0f;
+        const float dyn = (gyn > kSentinelThresh) ? (c - gyn) : 0.0f;
         const float dx_sq = std::max(dxp * dxp, dxn * dxn);
         const float dy_sq = std::max(dyp * dyp, dyn * dyn);
         gsq[idx] = dx_sq + dy_sq;
